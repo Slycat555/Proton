@@ -99,7 +99,7 @@ or **Docker**, plus `git`, `make` and roughly **50 GB** of free disk space.
 A first build takes about 1–3 hours; later builds are incremental.
 
 ```sh
-git clone --recurse-submodules -b codecs https://github.com/YOUR_USERNAME/Proton.git proton-codecs
+git clone --recurse-submodules -b codecs https://github.com/Slycat555/Proton.git proton-codecs
 mkdir proton-codecs-build && cd proton-codecs-build
 ../proton-codecs/configure.sh --enable-ccache --build-name=proton-10-codecs
 make redist
