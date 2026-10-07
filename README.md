@@ -1,340 +1,184 @@
-Introduction
-------------
+# Proton 10 + Codecs
 
-**Proton** is a tool for use with the Steam client which allows games which are
-exclusive to Windows to run on the Linux operating system. It uses Wine to
-facilitate this.
+A fork of [Valve's Proton 10](https://github.com/ValveSoftware/Proton/tree/proton_10.0)
+that adds the video and audio codecs Valve leaves out, so in-game videos and audio
+play correctly — **including outside the Steam client** (Heroic, Lutris, umu, etc.).
 
-**Most users should use Proton provided by the Steam Client itself.** See
-[this Steam Community post][steam-play-introduction] for more details.
+Without it, many games show a **TV test pattern** instead of cutscenes, or play
+**videos and music with no sound**.
 
-The source code is provided to enable advanced users the ability to alter
-Proton. For example, some users may wish to use a different version of Wine
-with a particular title.
+| | Valve Proton 10 | This fork |
+|---|---|---|
+| H.264, HEVC, AAC, WMV/VC-1, WMA, WMA Pro, MPEG-1/2/4 decoders | ❌ | ✅ |
+| `.wmv` / `.asf` and `.mpg` / `.vob` containers | ❌ | ✅ |
+| Cutscenes outside the Steam client | Test pattern / silence | ✅ Plays |
+| xWMA audio (XACT / XAudio2) outside Steam | Silent | ✅ Plays |
+| WMA audio in Media Foundation videos | Silent | ✅ Plays |
+| Build fails if a codec goes missing | — | ✅ |
 
-**The changelog** is available on [our wiki][changelog].
+---
 
-[steam-play-introduction]: https://steamcommunity.com/games/221410/announcements/detail/1696055855739350561
-[changelog]: https://github.com/ValveSoftware/Proton/wiki/Changelog
+## Why this exists
 
+Formats such as H.264, AAC, WMV and WMA are patent-encumbered, so Valve does not
+ship decoders for them. Instead, Proton relies on a **media converter**:
 
-Obtaining Proton sources
-------------------------
+1. Proton records the media a game plays.
+2. Valve transcodes it to open formats (AV1 / Opus) and delivers it via the Steam client.
+3. At playback, Proton swaps in the transcoded version — or, if none exists yet,
+   a placeholder (the test pattern, or silence).
 
-Acquire Proton's source by cloning <https://github.com/ValveSoftware/Proton>
-and checking out the branch you desire.
+This works inside Steam, but breaks in several ways elsewhere:
 
-You can clone the latest Proton to your system with this command:
+- **No decoders.** FFmpeg was built with everything disabled, and gst-libav's ASF
+  demuxer is registered at rank `NONE`, so `.wmv` files could not even be opened.
+- **The converter outranks real decoders.** Proton's audio converter is registered
+  one rank above FFmpeg's. Outside Steam it fails on startup
+  (`MEDIACONV_AUDIO_DUMP_FILE not set`) and Wine never falls back, so audio is silent.
+- **A Wine bug, normally hidden by the converter.** Wine's WMA decoder did not
+  implement `GetInputCurrentType` / `GetOutputCurrentType`. The Media Foundation
+  source reader calls these while setting up audio, so apps disabled the audio
+  track and played videos silently.
 
-```bash
-git clone --recurse-submodules https://github.com/ValveSoftware/Proton.git proton
+## What's changed
+
+**Build (`Makefile.in`)**
+- FFmpeg is built with all native decoders, demuxers and parsers, and **shipped**
+  (Valve built it only to link gst-libav). Encoders, muxers, networking, devices,
+  hardware acceleration and autodetected system libraries stay disabled.
+- Adds **gst-plugins-ugly** (`asfdemux`, RealMedia, DVD LPCM/subtitles) and enables
+  **`mpegdemux`** in gst-plugins-bad.
+- Adds a **build-time codec check** (see below).
+
+**Wine (`wine` submodule, `winegstreamer`)**
+- Real decoders are preferred over the Proton media converter in both the
+  Media Foundation transform path and decodebin; the converter is only a fallback.
+- Implements `GetInputCurrentType` / `GetOutputCurrentType` on the WMA decoder.
+
+Everything else is unchanged from Valve's `proton_10.0` branch.
+
+## Installation
+
+### From a release
+
+1. Download `proton-10-codecs.tar.gz` from the [Releases](../../releases) page.
+2. Extract it into Steam's compatibility tools folder:
+   ```sh
+   mkdir -p ~/.local/share/Steam/compatibilitytools.d
+   tar -xzf proton-10-codecs.tar.gz -C ~/.local/share/Steam/compatibilitytools.d
+   ```
+   Flatpak Steam uses
+   `~/.var/app/com.valvesoftware.Steam/data/Steam/compatibilitytools.d` instead.
+3. Restart Steam / your launcher.
+
+### Building it yourself
+
+See [Building](#building) below.
+
+## Usage
+
+**Steam:** Game → Properties → Compatibility → *Force the use of a specific Steam
+Play compatibility tool* → **proton-10-codecs**.
+
+**Heroic:** Game settings → *Wine Version* → **proton-10-codecs**.
+
+**Lutris:** Configure → Runner options → *Wine version* → **proton-10-codecs**.
+
+**umu-launcher:**
+```sh
+PROTONPATH=~/.local/share/Steam/compatibilitytools.d/proton-10-codecs umu-run game.exe
 ```
 
-Be sure to update submodules when switching between branches:
+If you previously ran the game with another Proton build and videos still fail,
+delete the `gstreamer-1.0` folder in the game's prefix (it is only a plugin cache).
 
-```bash
-git checkout experimental_6.3
-git submodule update --init --recursive
+## Building
+
+Building uses Valve's Steam Runtime SDK container, so you need **Podman** (recommended)
+or **Docker**, plus `git`, `make` and roughly **50 GB** of free disk space.
+A first build takes about 1–3 hours; later builds are incremental.
+
+```sh
+git clone --recurse-submodules -b codecs https://github.com/YOUR_USERNAME/Proton.git proton-codecs
+mkdir proton-codecs-build && cd proton-codecs-build
+../proton-codecs/configure.sh --enable-ccache --build-name=proton-10-codecs
+make redist
 ```
 
-If you want to change any subcomponent, now is the time to do so. For
-example, if you wish to make changes to Wine, you would apply them to the
-`wine/` directory.
+The result is in `redist/`; copy it to `compatibilitytools.d/proton-10-codecs`
+(or run `make install` to install it into `~/.steam/root/compatibilitytools.d`).
 
+Notes:
+- **SELinux** (Fedora, Bazzite, Bluefin, …): add `--relabel-volumes` to `configure.sh`
+  if it reports *"The container cannot access files"*.
+- **Running from a Flatpak terminal or editor** (e.g. Flatpak VS Code): run the
+  commands on the host, e.g. `flatpak-spawn --host make redist`.
+- The `wine` submodule uses a relative URL (`../wine`), so this repository expects
+  a matching fork of [ValveSoftware/wine](https://github.com/ValveSoftware/wine)
+  under the same account.
 
-Building Proton
----------------
+For all other build targets and options (debug builds, `make deploy`,
+`make module=...`), see Valve's [original README](README.upstream.md).
 
-Most of Proton builds inside the Proton SDK container with very few
-dependencies on the host side.
+## Codec check
 
-## Preparing the build environment
+Every `make redist`, `make deploy` and `make install` runs
+[`codec-check`](codec-check/codec_check.c) inside the Steam Runtime container
+against the packaged plugins, for both **i386** and **x86_64**. The build fails
+unless each format below has a working, real (non-Proton-converter) decoder or demuxer:
 
-You need either a Docker or a Podman setup. We highly recommend [the rootless
-Podman setup][rootless-podman]. Please refer to your distribution's
-documentation for setup instructions (e.g. Arch [Podman][arch-podman] /
-[Docker][arch-docker], Debian [Podman][debian-podman] /
-[Docker][debian-docker]).
+| Audio | Video | Containers |
+|---|---|---|
+| WMA v2 / xWMA | WMV3 (WMV9) | ASF / WMV |
+| WMA Pro | VC-1 | MP4 / MOV |
+| AAC | H.264 | AVI |
+| MP3 | HEVC | Matroska / WebM |
+| MS ADPCM | MPEG-2 | MPEG-PS (`.mpg`, `.vob`) |
+| Vorbis | MPEG-4 Part 2 | |
+| Opus | VP8, Theora | |
 
-[rootless-podman]: https://github.com/containers/podman/blob/main/docs/tutorials/rootless_tutorial.md
-[arch-podman]: https://wiki.archlinux.org/title/Podman
-[arch-docker]: https://wiki.archlinux.org/title/Docker
-[debian-podman]: https://wiki.debian.org/Podman
-[debian-docker]: https://wiki.debian.org/Docker
+Run it on its own with `make codec-check`. To cover a new format, add a line to
+the `checks[]` table in `codec-check/codec_check.c`.
 
+This verifies that the codecs are present. It does not test Wine's playback code
+paths, so bugs like the WMA decoder issue above still need testing in a game.
 
-## The Easy Way
+## Troubleshooting
 
-We provide a top-level Makefile which will execute most of the build commands
-for you.
+Collect a log by launching the game with:
 
-After checking out the repository and updating its submodules, assuming that
-you have a working Docker or Podman setup, you can build and install Proton
-with a simple:
-
-```bash
-make install
+```sh
+PROTON_LOG=1 GST_DEBUG=3 %command%
 ```
 
-If your build system is missing dependencies, it will fail quickly with a clear
-error message.
+(in Heroic/Lutris, set these as environment variables). The log is written to
+`~/steam-<appid>.log`. Useful things to look for:
 
-After the build finishes, you may need to restart the Steam client to see the
-new Proton tool. The tool's name in the Steam client will be based on the
-currently checked out branch of Proton. You can override this name using the
-`build_name` variable.
+- `Failed to find any element factory matching ...` followed by
+  `Failed to create winegstreamer transform` — a missing decoder.
+- `protonmediaconverter` errors — the media converter is being used instead of a
+  real decoder.
+- `fixme:wmadec` / `fixme:mfplat` ... `stub!` — an unimplemented Wine function.
 
-See `make help` for other build targets and options.
+Please include the log when opening an issue.
 
+## Legal
 
+This project bundles FFmpeg and GStreamer plugins that decode patent-encumbered
+formats (e.g. H.264, HEVC, AAC, WMV, WMA). Depending on where you live, using or
+distributing these decoders may require patent licenses. You are responsible for
+complying with the laws of your jurisdiction.
 
-## Manual building
+FFmpeg is built **without** `--enable-gpl` or `--enable-nonfree`, so it remains
+LGPL-2.1+. Proton is licensed under the terms in [LICENSE](LICENSE) and
+[LICENSE.proton](LICENSE.proton); bundled components keep their own licenses.
 
-### Configuring the build
+This project is not affiliated with or endorsed by Valve. "Proton" and "Steam" are
+trademarks of Valve Corporation.
 
-```bash
-mkdir ../build && cd ../build
-../proton/configure.sh --enable-ccache --build-name=my_build
-```
+## Credits
 
-Running `configure.sh` will create a `Makefile` allowing you to build Proton.
-The scripts checks if containers are functional and prompt you if any
-host-side dependencies are missing. You should run the command from a
-directory created specifically for your build.
-
-The configuration script tries to discover a working Docker or Podman setup
-to use, but you can force a compatible engine with
-`--container-engine=<executable_name>`.
-
-You can enable ccache with `--enable-cache` flag. This will mount your
-`$CCACHE_DIR` or `$HOME/.ccache` inside the container.
-
-`--proton-sdk-image=registry.gitlab.steamos.cloud/proton/soldier/sdk:<version>`
-can be used to build with a custom version of the Proton SDK images.
-
-Check `--help` for other configuration options.
-
-NOTE: If **SELinux** is in use, the Proton build container may fail to access
-your user's files. This is caused by [SELinux's filesystem
-labels][selinux-labels]. You may pass the `--relabel-volumes` switch to
-configure to cause the [container engine to relabel its
-bind-mounts][bind-mounts] and allow access to those files from within the
-container. This can be dangerous when used with system directories. Proceed
-with caution and refer your container engine's manual.
-
-[selinux-labels]: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/6/html/security-enhanced_linux/sect-security-enhanced_linux-working_with_selinux-selinux_contexts_labeling_files
-[bind-mounts]: https://docs.docker.com/storage/bind-mounts/
-
-
-### Building
-
-```
-make
-```
-
-**Important make targets:**
-
-`make install` - install Proton into your user's Steam directory, see the [install Proton
-locally](#install-proton-locally) section for details.
-
-`make redist` - create a redistribute build (`redist/`) that can be copied to
-`~/.steam/root/compatibilitytools.d/`.
-
-`make deploy` - create a deployment build (`deploy/`). This is what we use to
-deploy Proton to Steam users via Steamworks.
-
-`make module=<module> module` - build both 32- and 64-bit versions of the
-specified wine module. This allows rapid iteration on one module. This target
-is only useful after building Proton.
-
-`make dxvk` / `make vkd3d-proton` - rebuild DXVK / vkd3d-proton.
-
-
-### Figuring Out What Failed To Build
-
-Proton build system invokes builds of many subprojects in parallel. If one
-subprojects fails there can be thousands of lines printed by other sub-builds
-before the top level exits. This can make the real reason of the build failing
-hard to find.
-
-Appending `2>&1 | tee build.log` will log the full build output to a `build.log`
-file. Searching that file from the bottom up for occurrences of `Error` should
-point to the right area. E.g.:
-
-```
-make 2>&1 | tee build.log
-grep -n '] Error [0-9]' build.log
-```
-
-```
-11220:make: *** [../Makefile.in:465: /builds/proton/proton/build-dir/.kaldi-i386-configure] Error 1
-12427:make: *** [../Makefile.in:1323: deploy] Error 2
-```
-
-
-### Debug Builds
-
-To prevent symbol stripping add `UNSTRIPPED_BUILD=1` to the `make`
-invocation. This should be used only with a clean build directory.
-
-E.g.:
-
-```
-mkdir ../debug-proton-build && cd ../debug-proton-build
-../proton/configure.sh --enable-ccache --build-name=debug_build
-make UNSTRIPPED_BUILD=1 install
-```
-
-
-Install Proton locally
-----------------------
-
-Steam ships with several versions of Proton, which games will use by default or
-that you can select in Steam Settings' Steam Play page. Steam also supports
-running games with local builds of Proton, which you can install on your
-machine.
-
-To install a local build of Proton into Steam, make a new directory in
-`~/.steam/root/compatibilitytools.d/` with a tool name of your choosing and
-place the directory containing your redistributable build under that path.
-
-The `make install` target will perform this task for you, installing the
-Proton build into the Steam folder for the current user. You will have to
-restart the Steam client for it to pick up on a new tool.
-
-A correct local tool installation should look similar to this:
-
-```
-compatibilitytools.d/my_proton/
-├── compatibilitytool.vdf
-├── filelock.py
-├── LICENSE
-├── proton
-├── proton_dist.tar
-├── toolmanifest.vdf
-├── user_settings.sample.py
-└── version
-```
-
-To enable your local build in Steam, go to the Steam Play section of the
-Settings window. If the build was correctly installed, you should see
-"proton-localbuild" in the drop-down list of compatibility tools.
-
-Each component of this software is used under the terms of their licenses.
-See the `LICENSE` files here, as well as the `LICENSE`, `COPYING`, etc files
-in each submodule and directory for details. If you distribute a built
-version of Proton to other users, you must adhere to the terms of these
-licenses.
-
-
-Debugging
----------
-
-Proton builds have their symbols stripped by default. You can switch to
-"debug" beta branch in Steam (search for Proton in your library,
-Properties... -> BETAS -> select "debug") or build without stripping (see
-[Debug Builds section](#debug-builds)).
-
-The symbols are provided through the accompanying `.debug` files which may
-need to be explicitly loaded by the debugging tools. For GDB there's a helper
-script `wine/tools/gdbinit.py` (source it) that provides `load-symbol-files`
-(or `lsf` for short) command which loads the symbols for all the mapped files.
-
-For tips on debugging see [docs/DEBUGGING-LINUX.md](docs/DEBUGGING-LINUX.md)
-and [docs/DEBUGGING-WINDOWS.md](docs/DEBUGGING-WINDOWS.md).
-
-
-`compile_commands.json`
------------------------
-
-For use with [clangd](https://clangd.llvm.org/) LSP server and similar tooling.
-
-Projects built using cmake or meson (e.g. vkd3d-proton) automatically come with
-`compile_commands.json`. For autotools (e.g. wine) you have to [configure the
-build](#configuring-the-build) with `--enable-bear` that uses
-[bear](https://github.com/rizsotto/Bear) to create the compilation database.
-It's not on by default as it make the build slightly slower.
-
-The build system collects all the created compile_commands.json files in a
-build subdirectory named `compile_commands/`.
-
-The paths are translated to point to the real source (i.e. not the rsynced
-copy). It still may depend on build directory for things like auto-generated
-`config.h` though and for wine it may be beneficial to run `tools/make_requests`
-in you source directories as those changes are not committed.
-
-You can then configure your editor to use that file for clangd in a few ways:
-
-1) directly - some editors/plugins allow you to specify the path to `compile_commands.json`
-2) via `.clangd` file, e.g.
-```bash
-cd src/proton/wine/
-cat > .clangd <<EOF
-CompileFlags:
-  CompilationDatabase: ../build/current-dev/compile_commands/wine64/
-EOF
-```
-3) by symlinking:
-```bash
-ln -s ../build/current-dev/compile_commands/wine64/compile_commands.json .
-```
-
-
-Runtime Config Options
-----------------------
-
-Proton can be tuned at runtime to help certain games run. The Steam client sets
-some options for known games using the `STEAM_COMPAT_CONFIG` variable.
-You can override these options using the environment variables described below.
-
-The best way to set these environment overrides for all games is by renaming
-`user_settings.sample.py` to `user_settings.py` and modifying it appropriately.
-This file is located in the Proton installation directory in your Steam library
-(often `~/.steam/steam/steamapps/common/Proton #.#`).
-
-If you want to change the runtime configuration for a specific game, you can
-use the `Set Launch Options` setting in the game's `Properties` dialog in the
-Steam client. Set the variable, followed by `%command%`. For example, input
-"`PROTON_USE_WINED3D=1 %command%`" to use the OpenGL-based wined3d renderer
-instead of the Vulkan-based DXVK renderer.
-
-To enable an option, set the variable to a non-`0` value.  To disable an
-option, set the variable to `0`. To use Steam's default configuration, do
-not specify the variable at all.
-
-All of the below are runtime options. They do not effect permanent changes to
-the Wine prefix. Removing the option will revert to the previous behavior.
-
-| Compat config string  | Environment Variable               | Description  |
-| :-------------------- | :--------------------------------- | :----------- |
-|                       | `PROTON_LOG`                       | Convenience method for dumping a useful debug log to `$PROTON_LOG_DIR/steam-$APPID.log`. Set to `1` to enable default logging, or set to a string to be appended to the default `WINEDEBUG` channels. |
-|                       | `PROTON_LOG_DIR`                   | Output log files into the directory specified. Defaults to your home directory. |
-|                       | `PROTON_WAIT_ATTACH`               | Wait for a debugger to attach to steam.exe before launching the game process. To attach to the game process at startup, debuggers should be set to follow child processes. |
-|                       | `PROTON_CRASH_REPORT_DIR`          | Write crash logs into this directory. Does not clean up old logs, so may eat all your disk space eventually. |
-| `wined3d`             | `PROTON_USE_WINED3D`               | Use OpenGL-based wined3d instead of Vulkan-based DXVK for d3d11, d3d10, and d3d9. |
-| `nod3d11`             | `PROTON_NO_D3D11`                  | Disable `d3d11.dll`, for d3d11 games which can fall back to and run better with d3d9. |
-| `nod3d10`             | `PROTON_NO_D3D10`                  | Disable `d3d10.dll` and `dxgi.dll`, for d3d10 games which can fall back to and run better with d3d9. |
-| `dxvkd3d8`            | `PROTON_DXVK_D3D8`                 | Use DXVK's `d3d8.dll`. |
-| `noesync`             | `PROTON_NO_ESYNC`                  | Do not use eventfd-based in-process synchronization primitives. |
-| `nofsync`             | `PROTON_NO_FSYNC`                  | Do not use futex-based in-process synchronization primitives. (Automatically disabled on systems with no `FUTEX_WAIT_MULTIPLE` support.) |
-|                       | `HOST_LC_ALL`                      | Set value to a locale to override all other system locale settings for a game.  This variable should be used instead of `LC_ALL`. |
-| `disablenvapi`        | `PROTON_DISABLE_NVAPI`             | Disable NVIDIA's NVAPI GPU support library. |
-| `nativevulkanloader`  |                                    | Use the Vulkan loader shipped with the game instead of Proton's built-in Vulkan loader. This breaks VR support, but is required by a few games. |
-| `forcelgadd`          | `PROTON_FORCE_LARGE_ADDRESS_AWARE` | Force Wine to enable the LARGE_ADDRESS_AWARE flag for all executables. Enabled by default. |
-| `heapdelayfree`       | `PROTON_HEAP_DELAY_FREE`           | Delay freeing some memory, to work around application use-after-free bugs. |
-| `gamedrive`           | `PROTON_SET_GAME_DRIVE`            | Create an S: drive which points to the Steam Library which contains the game. |
-| `noforcelgadd`        |                                    | Disable forcelgadd. If both this and `forcelgadd` are set, enabled wins. |
-| `oldglstr`            | `PROTON_OLD_GL_STRING`             | Set some driver overrides to limit the length of the GL extension string, for old games that crash on very long extension strings. |
-| `vkd3dfl12`           |                                    | Force the Direct3D 12 feature level to 12, regardless of driver support. |
-| `vkd3dbindlesstb`     |                                    | Put `force_bindless_texel_buffer` into `VKD3D_CONFIG`. |
-| `nomfdxgiman`         | `WINE_DO_NOT_CREATE_DXGI_DEVICE_MANAGER` | Enable hack to work around video issues in some games due to incomplete IMFDXGIDeviceManager support. |
-| `noopwr`              | `WINE_DISABLE_VULKAN_OPWR`               | Enable hack to disable Vulkan other process window rendering which sometimes causes issues on Wayland due to blit being one frame behind. |
-| `hidenvgpu`           | `PROTON_HIDE_NVIDIA_GPU`           | Force Nvidia GPUs to always be reported as AMD GPUs. Some games require this if they depend on Windows-only Nvidia driver functionality. See also DXVK's nvapiHack config, which only affects reporting from Direct3D. |
-|                       | `WINE_FULLSCREEN_INTEGER_SCALING`  | Enable integer scaling mode, to give sharp pixels when upscaling. |
-| `cmdlineappend:`      |                                    | Append the string after the colon as an argument to the game command. May be specified more than once. Escape commas and backslashes with a backslash. |
-| `xalia` or `noxalia`  | `PROTON_USE_XALIA`                 | Enable Xalia, a program that can add a gamepad UI for some keyboard/mouse interfaces, or set to 0 to disable. The default is to enable it dynamically based on window contents. |
-| `fnad3d11`            | `FNA3D_FORCE_DRIVER=D3D11`         | Force FNA to use D3D11 for rendering. |
-| `seccomp`             | `PROTON_USE_SECCOMP`               | **Note: Obsoleted in Proton 5.13.** In older versions, enable seccomp-bpf filter to emulate native syscalls, required for some DRM protections to work. |
-| `d9vk`                | `PROTON_USE_D9VK`                  | **Note: Obsoleted in Proton 5.0.** In older versions, use Vulkan-based DXVK instead of OpenGL-based wined3d for d3d9. |
-
-<!-- Target:  GitHub Flavor Markdown.  To test locally:  pandoc -f markdown_github -t html README.md  -->
+- [Valve and CodeWeavers](https://github.com/ValveSoftware/Proton) for Proton and Wine.
+- The [FFmpeg](https://ffmpeg.org) and [GStreamer](https://gstreamer.freedesktop.org) projects.
+- [GE-Proton](https://github.com/GloriousEggroll/proton-ge-custom), which pioneered
+  shipping codecs with Proton.
