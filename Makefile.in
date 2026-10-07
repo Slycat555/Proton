@@ -238,6 +238,27 @@ $(eval $(call rules-meson,gst_bad,i386,unix))
 $(eval $(call rules-meson,gst_bad,x86_64,unix))
 
 ##
+## gst-plugins-ugly
+##
+
+## asfdemux is needed for WMV/ASF videos; gst-libav registers its ASF demuxer
+## with rank NONE, so without this decodebin cannot play .wmv files at all.
+GST_UGLY_MESON_ARGS := \
+	-Dauto_features=disabled \
+	-Dasfdemux=enabled \
+	-Drealmedia=enabled \
+	-Ddvdlpcmdec=enabled \
+	-Ddvdsub=enabled \
+	-Dorc=enabled
+
+GST_UGLY_DEPENDS = gst_orc gstreamer gst_base
+GST_UGLY_HOST_DEPENDS = gst_orc
+
+$(eval $(call rules-source,gst_ugly,$(SRCDIR)/gstreamer/subprojects/gst-plugins-ugly/))
+$(eval $(call rules-meson,gst_ugly,i386,unix))
+$(eval $(call rules-meson,gst_ugly,x86_64,unix))
+
+##
 ## FFmpeg
 ##
 
@@ -1165,7 +1186,7 @@ all-dist: $(OVR_i386_DIST) $(OVR_x86_64_DIST)
 ## default_pfx
 ##
 
-default_pfx: wine gst_good gst_bad gst_libav gst_plugins_rs lsteamclient steamexe vrclient wineopenxr dxvk dxvk-nvapi vkd3d-proton
+default_pfx: wine gst_good gst_bad gst_ugly gst_libav gst_plugins_rs lsteamclient steamexe vrclient wineopenxr dxvk dxvk-nvapi vkd3d-proton
 	find $(DST_LIBDIR)/wine -type f -execdir chmod a-w '{}' '+'
 	rm -rf $(abspath $(DIST_PREFIX))
 	python3 $(SRCDIR)/default_pfx.py $(abspath $(DIST_PREFIX)) $(abspath $(DST_DIR))
