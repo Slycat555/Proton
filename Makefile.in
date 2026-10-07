@@ -229,7 +229,8 @@ GST_BAD_MESON_ARGS := \
 	-Dauto_features=disabled \
 	-Dvideoparsers=enabled \
 	-Dhls=enabled \
-	-Dmpegtsdemux=enabled
+	-Dmpegtsdemux=enabled \
+	-Dmpegdemux=enabled
 
 GST_BAD_DEPENDS = gst_orc gstreamer gst_base
 
@@ -1276,9 +1277,9 @@ all-dist:
 
 define codec-check-arch
 $(OBJ)/codec-check-$(1): $(SRCDIR)/codec-check/codec_check.c all
-	PKG_CONFIG_PATH=$(GSTREAMER_$(1)_DST)/lib/$(2)/pkgconfig \
 	$(3)-linux-gnu-gcc -O1 -o $$@ $$< \
-	    $$$$($(3)-linux-gnu-pkg-config --cflags --libs gstreamer-1.0)
+	    $$$$(PKG_CONFIG_LIBDIR=$(GSTREAMER_$(1)_DST)/lib/$(2)/pkgconfig:/usr/lib/$(2)/pkgconfig:/usr/share/pkgconfig \
+	         pkg-config --cflags --libs gstreamer-1.0)
 
 .PHONY: codec-check-$(1)
 codec-check-$(1): $(OBJ)/codec-check-$(1)
