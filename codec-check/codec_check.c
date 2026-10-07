@@ -28,7 +28,7 @@ checks[] =
     {GST_ELEMENT_FACTORY_TYPE_DECODER, "audio/x-vorbis", "Vorbis"},
     {GST_ELEMENT_FACTORY_TYPE_DECODER, "audio/x-opus", "Opus"},
     /* video */
-    {GST_ELEMENT_FACTORY_TYPE_DECODER, "video/x-wmv, wmvversion=(int)3", "WMV3 (WMV9)"},
+    {GST_ELEMENT_FACTORY_TYPE_DECODER, "video/x-wmv, wmvversion=(int)3, format=(string)WMV3", "WMV3 (WMV9)"},
     {GST_ELEMENT_FACTORY_TYPE_DECODER, "video/x-wmv, wmvversion=(int)3, format=(string)WVC1", "VC-1"},
     {GST_ELEMENT_FACTORY_TYPE_DECODER, "video/x-h264, stream-format=(string)byte-stream, alignment=(string)au", "H.264"},
     {GST_ELEMENT_FACTORY_TYPE_DECODER, "video/x-h265, stream-format=(string)byte-stream, alignment=(string)au", "HEVC"},
