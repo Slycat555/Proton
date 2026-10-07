@@ -244,11 +244,17 @@ $(eval $(call rules-meson,gst_bad,x86_64,unix))
 FFMPEG_CONFIGURE_ARGS := \
 	--enable-shared \
 	--disable-static \
-	--disable-everything \
 	--disable-programs \
 	--disable-doc \
 	--disable-inline-asm \
-	--enable-demuxer=matroska \
+	--disable-autodetect \
+	--disable-network \
+	--disable-avdevice \
+	--disable-encoders \
+	--disable-muxers \
+	--disable-devices \
+	--disable-hwaccels \
+	--enable-zlib \
 
 FFMPEG_i386-unix_CONFIGURE_ARGS := \
 	--cross-prefix=i686-linux-gnu- \
@@ -264,11 +270,8 @@ $(eval $(call rules-source,ffmpeg,$(SRCDIR)/ffmpeg))
 $(eval $(call rules-configure,ffmpeg,i386,unix))
 $(eval $(call rules-configure,ffmpeg,x86_64,unix))
 
-## Only use ffmpeg to build gst-libav; we don't ship it.
-$(OBJ)/.ffmpeg-i386-dist:
-	touch $@
-$(OBJ)/.ffmpeg-x86_64-dist:
-	touch $@
+## Ship ffmpeg so gst-libav has the full set of decoders and demuxers
+## (H.264, HEVC, AAC, WMV/WMA, MPEG-1/2/4, ...) at runtime.
 
 ##
 ## gst-libav
